@@ -1,31 +1,25 @@
-import sys
-import json
 import os
+import sys
 from logic.intent_parser import LLMIntentParser
-from logic.pipeline_manager import PipelineManager
-from logic.task_broker import RenderTaskBroker
+from logic.mcp_client import MCPBlenderClient
 
 class BlenderServer:
     def __init__(self):
         self.parser = LLMIntentParser()
-        self.orchestrator = PipelineManager()
-        self.broker = RenderTaskBroker() # 引入任务经纪人
+        # 核心：不再引用本地渲染代码，改用网络客户端
+        self.mcp_portal = MCPBlenderClient(host="standalone-blender-server", port=19876)
 
-    def handle_distributed_request(self, user_id, user_prompt, asset_uri):
-        """
-        分布式模式：解析意图并发布消息，不直接执行渲染
-        """
-        task_id = self.orchestrator.register_task(user_id, user_prompt)
+    def handle_mcp_production_request(self, user_id, user_prompt, asset_uri):
+        print(f"\n[SaaS-Middle-Tier] 接收到用户 {user_id} 的生产请求")
         
-        # 1. 意图解析 (Middle-tier 逻辑)
-        # 此时 output_path 变为远程存储占位符
-        intent_data = self.parser.parse_requirement(user_prompt, asset_uri, f"cloud://bucket/renders/{task_id}.png")
+        # 1. 意图解析
+        intent_data = self.parser.parse_requirement(user_prompt, asset_uri, f"cloud://output/{user_id}_final.png")
         
-        # 2. 分布式发布 (解耦的核心)
-        message_id = self.broker.publish_task("RENDER_JOB", {
-            "task_id": task_id,
+        # 2. 通过 19876 端口下发指令到独立服务器
+        response = self.mcp_portal.send_render_intent(intent_data)
+        
+        return {
             "user_id": user_id,
-            "render_intent": intent_data
-        })
-        
-        return {"task_id": task_id, "message_id": message_id, "status": "dispatched_to_worker"}
+            "mcp_server_response": response,
+            "instruction": "Please check port 19876 logs on the rendering node."
+        }
