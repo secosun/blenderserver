@@ -3,53 +3,29 @@ import json
 import os
 from logic.intent_parser import LLMIntentParser
 from logic.pipeline_manager import PipelineManager
-
-# SaaS context: append paths
-sys.path.append('/content/blendermcp/src')
+from logic.task_broker import RenderTaskBroker
 
 class BlenderServer:
     def __init__(self):
         self.parser = LLMIntentParser()
         self.orchestrator = PipelineManager()
+        self.broker = RenderTaskBroker() # 引入任务经纪人
 
-    def handle_saas_request(self, user_id, user_prompt, asset_path, output_dir, run_blender_func):
-        # A. Register Task in SaaS Orchestrator
+    def handle_distributed_request(self, user_id, user_prompt, asset_uri):
+        """
+        分布式模式：解析意图并发布消息，不直接执行渲染
+        """
         task_id = self.orchestrator.register_task(user_id, user_prompt)
-        print(f"\n[SaaS-BlenderServer] New Task Registered: {task_id} for User: {user_id}")
         
-        # B. Parse Intent
-        self.orchestrator.update_status(task_id, "parsing_intent")
-        preview_path = os.path.join(output_dir, f"{task_id}_preview.png")
-        intent_data = self.parser.parse_requirement(user_prompt, asset_path, preview_path)
-
-        # C. Dispatch Stage 1: EEVEE
-        self.orchestrator.update_status(task_id, "rendering_preview")
-        blender_script = f"""
-import sys
-import json
-sys.path.append('/content/blendermcp/src')
-from executor_v2 import SmartIntentExecutor
-intent = {json.dumps(intent_data)}
-executor = SmartIntentExecutor(json.dumps(intent))
-print(f'TASK_ID:{task_id}_PREVIEW_DONE:' + str(executor.run(preview_mode=True)))
-"""
-        run_blender_func(blender_script)
+        # 1. 意图解析 (Middle-tier 逻辑)
+        # 此时 output_path 变为远程存储占位符
+        intent_data = self.parser.parse_requirement(user_prompt, asset_uri, f"cloud://bucket/renders/{task_id}.png")
         
-        # D. Dispatch Stage 2: Cycles (Final Output)
-        self.orchestrator.update_status(task_id, "rendering_hd")
-        final_path = os.path.join(output_dir, f"{task_id}_final.png")
-        intent_data['output_path'] = final_path
+        # 2. 分布式发布 (解耦的核心)
+        message_id = self.broker.publish_task("RENDER_JOB", {
+            "task_id": task_id,
+            "user_id": user_id,
+            "render_intent": intent_data
+        })
         
-        hd_script = f"""
-import sys
-import json
-sys.path.append('/content/blendermcp/src')
-from executor_v2 import SmartIntentExecutor
-intent = {json.dumps(intent_data)}
-executor = SmartIntentExecutor(json.dumps(intent))
-print(f'TASK_ID:{task_id}_HD_DONE:' + str(executor.run(preview_mode=False)))
-"""
-        run_blender_func(hd_script)
-        
-        self.orchestrator.update_status(task_id, "completed")
-        return {"task_id": task_id, "preview": preview_path, "final": final_path}
+        return {"task_id": task_id, "message_id": message_id, "status": "dispatched_to_worker"}
