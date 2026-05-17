@@ -1,27 +1,19 @@
 import sys
 import os
+# 引用 blendermcp 作为依赖
+sys.path.append('/content/blendermcp/src')
 from logic.intent_parser import LLMIntentParser
-from logic.mcp_network_client import MCPBlenderNetworkClient
+from mcp_client_sdk import BlenderMCPClient
 
 class BlenderServer:
-    def __init__(self, render_node_ip="standalone-gpu-node"):
+    def __init__(self):
         self.parser = LLMIntentParser()
-        # 初始化网络客户端，对接 19876 端口
-        self.mcp_client = MCPBlenderNetworkClient(host=render_node_ip, port=19876)
+        self.bridge = BlenderMCPClient() # 中台持有一个 mcp 客户端句柄
 
-    def handle_saas_production_request(self, user_id, user_prompt, asset_uri):
-        print(f"\n[SaaS-Middle-Tier] 接收到分布式渲染请求: User={user_id}")
-        
-        # 1. 意图解析 (中台核心价值：模糊需求 -> 技术意图)
-        # 此时 output_path 指向分布式的云存储路径
-        intent_data = self.parser.parse_requirement(user_prompt, asset_uri, f"cloud://bucket/renders/{user_id}_final.png")
-        
-        # 2. 通过 19876 端口跨网络调度独立部署的 Blender
-        print("[SaaS-Middle-Tier] 正在跨网络调度独立渲染节点...")
-        response = self.mcp_client.execute_render(intent_data)
-        
-        return {
-            "task_status": "dispatched",
-            "mcp_response": response,
-            "storage_uri": intent_data['output_path']
-        }
+    def handle_saas_request(self, user_id, prompt, asset_uri):
+        print(f"\n[SaaS-Server] 接收请求: {user_id}")
+        # A. 生成意图
+        intent = self.parser.parse_requirement(prompt, asset_uri, f"cloud://{user_id}/out.png")
+        # B. 通过 blendermcp 桥梁发送
+        print("[SaaS-Server] 调用 blendermcp 管道...")
+        return self.bridge.call_render(intent)
