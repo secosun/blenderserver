@@ -1,0 +1,19 @@
+# Python
+__pycache__
+*.pyc
+.pytest_cache
+
+# Git
+.git
+.gitignore
+
+# Environment
+.env
+
+# Dev database
+data/
+
+# Docs & tests
+README.md
+tests/
+*.md
