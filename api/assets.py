@@ -27,12 +27,13 @@ async def list_assets(
     org = await db.get_organization_by_user(current_user["id"])
     assets = await db.list_assets(org_id=org["id"] if org else None, limit=limit, offset=offset)
 
+    from sqlalchemy import text
     total_query = "SELECT COUNT(*) as cnt FROM gallery_assets"
     params = {}
     if org:
         total_query += " WHERE organization_id = :oid"
         params["oid"] = org["id"]
-    row = await db._fetchone(total_query, params)
+    row = await db._fetchone(text(total_query), params)
     total = row["cnt"] if row else 0
 
     return {"assets": assets, "total": total}
