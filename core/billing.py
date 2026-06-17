@@ -33,8 +33,8 @@ DEFAULT_PLANS = [
         "name": "专业版",
         "slug": "pro",
         "description": "专业渲染，更高并发和分辨率，每月 500 次渲染",
-        "price_monthly_cents": 2999,
-        "price_yearly_cents": 29900,
+        "price_monthly_cents": 19900,
+        "price_yearly_cents": 199900,
         "features": {
             "concurrency": 5, "max_resolution": 8192,
             "max_samples": 1024, "max_tasks_per_month": 500,
@@ -47,8 +47,8 @@ DEFAULT_PLANS = [
         "name": "企业版",
         "slug": "enterprise",
         "description": "无限渲染，高级支持和定制服务",
-        "price_monthly_cents": 9999,
-        "price_yearly_cents": 99900,
+        "price_monthly_cents": 69900,
+        "price_yearly_cents": 699900,
         "features": {
             "concurrency": 20, "max_resolution": 16384,
             "max_samples": 10000, "max_tasks_per_month": -1,
