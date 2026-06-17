@@ -225,19 +225,19 @@ upload_dir.mkdir(parents=True, exist_ok=True)
 
 @app.get("/uploads/{file_path:path}")
 async def serve_upload(file_path: str):
-    if settings.storage_backend == "s3":
-        # Proxy from S3 — workers can't follow redirects
-        import httpx
-        storage = get_storage()
-        url = await storage.get_url(file_path)
-        if not url:
-            return Response(status_code=404)
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            resp = await client.get(url)
-            return Response(content=resp.content, media_type=resp.headers.get("content-type", "application/octet-stream"))
+    # Try local filesystem first (preview files, etc.)
     local = upload_dir / file_path
     if local.is_file():
         return FileResponse(str(local))
+    # Fallback to S3 proxy
+    if settings.storage_backend == "s3":
+        import httpx
+        storage = get_storage()
+        url = await storage.get_url(file_path)
+        if url:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                resp = await client.get(url)
+                return Response(content=resp.content, media_type=resp.headers.get("content-type", "application/octet-stream"))
     return Response(status_code=404)
 
 
