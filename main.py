@@ -21,10 +21,12 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from core.config import settings
 from core.queue import get_queue
+from core.storage import get_storage
 from core.task_manager import TaskManager
 
 # ---------------------------------------------------------------------------
@@ -193,6 +195,7 @@ from api.webhooks import router as webhooks_router
 from api.orgs import router as orgs_router
 from api.assets import router as assets_router
 from api.scenes_manage import router as scenes_manage_router
+from api.freecad_templates import router as freecad_templates_router
 from worker.callback import router as worker_router
 
 app.include_router(auth_router, prefix="/api")
@@ -205,15 +208,59 @@ app.include_router(webhooks_router, prefix="/api")
 app.include_router(orgs_router, prefix="/api")
 app.include_router(assets_router, prefix="/api")
 app.include_router(scenes_manage_router, prefix="/api")
+app.include_router(freecad_templates_router, prefix="/api")
 app.include_router(worker_router, prefix="/api")
 
 # Metrics endpoint (no prefix, at root)
 app.add_route("/metrics", metrics_endpoint, include_in_schema=False)
 
-# Serve uploaded files
+# Serve uploaded files — local or S3 proxy
 upload_dir = Path(settings.upload_dir)
 upload_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=str(upload_dir)), name="uploads")
+
+
+@app.get("/uploads/{file_path:path}")
+async def serve_upload(file_path: str):
+    if settings.storage_backend == "s3":
+        # Proxy from S3 — workers can't follow redirects
+        import httpx
+        storage = get_storage()
+        url = await storage.get_url(file_path)
+        if not url:
+            return Response(status_code=404)
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            resp = await client.get(url)
+            return Response(content=resp.content, media_type=resp.headers.get("content-type", "application/octet-stream"))
+    local = upload_dir / file_path
+    if local.is_file():
+        return FileResponse(str(local))
+    return Response(status_code=404)
+
+
+# Serve output files (render results) — local first, then S3 proxy
+output_dir = Path(settings.output_dir)
+output_dir.mkdir(parents=True, exist_ok=True)
+
+
+@app.get("/outputs/{file_path:path}")
+async def serve_output(file_path: str):
+    # Try local filesystem first (file was rendered and saved locally)
+    local = output_dir / file_path
+    if local.is_file():
+        media_type = "image/png" if local.suffix == ".png" else "application/octet-stream"
+        return FileResponse(str(local), media_type=media_type)
+    # Fall back to S3 proxy
+    if settings.storage_backend == "s3":
+        import httpx
+        storage = get_storage()
+        s3_key = f"outputs/{file_path}"
+        url = await storage.get_url(s3_key)
+        if not url:
+            return Response(status_code=404)
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            resp = await client.get(url)
+            return Response(content=resp.content, media_type=resp.headers.get("content-type", "image/png"))
+    return Response(status_code=404)
 
 
 # ---------------------------------------------------------------------------

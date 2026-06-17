@@ -129,9 +129,42 @@ services:
     profiles:
       - ""
 
+  # ── FreeCAD worker (parametric OBJ generation) ──────────────────────
+  freecad-worker:
+    image: python:3.12-slim
+    command: >
+      sh -c "pip install httpx &&
+             python -m src.freecad_worker.main"
+    environment:
+      BLENDERSERVER_URL: http://blenderserver:8060
+      CALLBACK_SECRET: ${WORKER_CALLBACK_SECRET:-change-in-production}
+      WORKER_LABEL: freecad-worker
+      FREECAD_MODE: docker
+      FREECAD_DOCKER_IMAGE: amrit3701/freecad-cli:latest
+      STORAGE_BACKEND: s3
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: cadrender
+      OUTPUT_DIR: /app/outputs
+      TEMPLATES_DIR: /app/freecad_templates
+    volumes:
+      - ../blenderworker/src:/app/src
+      - ../blenderworker/freecad_generate.py:/app/freecad_generate.py
+      - outputs_data:/app/outputs
+      - freecad_templates_data:/app/freecad_templates
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker-in-Docker for FreeCAD container
+    depends_on:
+      blenderserver:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - freecad
+
 volumes:
   postgres_data:
   redis_data:
   minio_data:
   uploads_data:
   outputs_data:
+  freecad_templates_data:

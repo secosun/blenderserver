@@ -164,8 +164,8 @@ class TaskManager:
         await self.db.update_task_status(task_id, status, **kwargs)
         return await self.get_task(task_id)
 
-    async def claim_next_task(self) -> dict | None:
-        task = await self.db.claim_next_task()
+    async def claim_next_task(self, worker_type: str | None = None) -> dict | None:
+        task = await self.db.claim_next_task(worker_type)
         return self._format_task(task) if task else None
 
     # ------------------------------------------------------------------

@@ -24,7 +24,7 @@ RUN addgroup --system app && adduser --system --ingroup app app
 
 WORKDIR /app
 
-# Copy installed dependencies from builder
+# Copy installed dependencies and entry points from builder
 COPY --from=builder /install /usr/local/lib/python3.12/site-packages
 
 # Copy application code
@@ -41,4 +41,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

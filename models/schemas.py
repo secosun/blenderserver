@@ -92,7 +92,12 @@ class ModelUploadResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class TaskCreate(BaseModel):
-    model_id: str = Field(..., description="ID of the uploaded 3D model")
+    # Legacy: direct model upload (admin only)
+    model_id: str | None = Field(None, description="ID of the uploaded 3D model (legacy)")
+    # New: FreeCAD parametric template
+    template_id: str | None = Field(None, description="FreeCAD template ID for parametric generation")
+    template_params: dict | None = Field(None, description="Parameters for FreeCAD template (e.g., {length: 100, width: 50})")
+
     name: str | None = Field(None, max_length=200, description="Human-readable task name")
     scene_id: str | None = Field(None, description="Predefined scene preset ID")
     prompt: str | None = Field(None, max_length=500, description="Text description of desired rendering (alternative to scene_id)")
@@ -107,6 +112,10 @@ class TaskCreate(BaseModel):
     @property
     def has_prompt(self) -> bool:
         return bool(self.prompt)
+
+    @property
+    def has_template(self) -> bool:
+        return bool(self.template_id)
 
 
 class TaskResponse(BaseModel):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7,7 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 
-from api.deps import get_current_user
+from api.deps import get_current_user, require_admin
 from core.config import settings
 from core.scenes import list_scenes
 from core.storage import get_storage
@@ -16,6 +17,8 @@ from models.schemas import (
     TaskCreate, TaskResponse, TaskListResponse, TaskStatus,
     ModelUploadResponse,
 )
+
+logger = logging.getLogger("blenderserver.api")
 
 router = APIRouter(tags=["api"])
 
@@ -31,7 +34,7 @@ ALLOWED_EXTENSIONS = {".fcstd", ".obj", ".stl", ".step", ".stp", ".fbx", ".glb",
 async def upload_model(
     request: Request,
     file: UploadFile = File(...),
-    current_user: Annotated[dict, Depends(get_current_user)] = None,
+    current_user: Annotated[dict, Depends(require_admin)] = None,
 ):
     ext = Path(file.filename or "model.obj").suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
@@ -65,24 +68,56 @@ async def create_task(
     request: Request,
     current_user: Annotated[dict, Depends(get_current_user)] = None,
 ):
-    if not body.has_scene and not body.has_prompt:
-        raise HTTPException(status_code=400, detail="Provide either scene_id, prompt, or both")
+    if not body.has_scene and not body.has_prompt and not body.has_template:
+        raise HTTPException(status_code=400, detail="Provide scene_id, prompt, or template_id")
 
     tm = _tm(request)
-    storage_path = f"{current_user['id']}/{body.model_id}"
 
-    task = await tm.create_task(
-        model_id=body.model_id,
-        prompt=body.prompt or "",
-        user_id=current_user["id"],
-        scene_id=body.scene_id,
-        storage_path=storage_path,
-        camera_styles=body.camera_styles,
-        name=body.name,
-        output_format=body.output_format,
-    )
+    # Template-based task: store template info in intent
+    if body.has_template:
+        # Validate template exists
+        from core import freecad_templates as tmpl_core
+        template = await tmpl_core.get_template(tm.db, body.template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail=f"Template '{body.template_id}' not found")
 
-    task = await tm.build_intent(task["id"])
+        task = await tm.create_task(
+            model_id="",  # Will be filled by freecad-worker
+            prompt=body.prompt or "",
+            user_id=current_user["id"],
+            scene_id=body.scene_id,
+            storage_path="",
+            camera_styles=body.camera_styles,
+            name=body.name,
+            output_format=body.output_format,
+        )
+
+        # Store template info in intent_json for freecad-worker
+        intent = {
+            "template_id": body.template_id,
+            "template_params": body.template_params or {},
+            "scene_id": body.scene_id or "",
+            "camera_styles": body.camera_styles or [],
+            "output_format": body.output_format or "png",
+            "product_category": None,  # Will be filled by build_intent
+        }
+        await tm.db.update_task_status(task["id"], TaskStatus.pending, intent_json=intent)
+        task = await tm.get_task(task["id"])
+    else:
+        # Legacy: model-based task
+        storage_path = f"{current_user['id']}/{body.model_id}"
+        task = await tm.create_task(
+            model_id=body.model_id or "",
+            prompt=body.prompt or "",
+            user_id=current_user["id"],
+            scene_id=body.scene_id,
+            storage_path=storage_path,
+            camera_styles=body.camera_styles,
+            name=body.name,
+            output_format=body.output_format,
+        )
+        task = await tm.build_intent(task["id"])
+
     return task
 
 
@@ -212,10 +247,38 @@ async def clone_task(
 
 @router.post("/tasks/claim-next", response_model=TaskResponse)
 async def claim_next_task(request: Request):
-    task = await _tm(request).claim_next_task()
+    worker_type = request.headers.get("X-Worker-Type", "").strip().lower() or None
+    task = await _tm(request).claim_next_task(worker_type)
     if not task:
         raise HTTPException(status_code=404, detail="No queued tasks")
     return task
+
+
+@router.post("/tasks/{task_id}/release")
+async def release_task(task_id: str, request: Request):
+    """Release a claimed task back to the queue so another worker can claim it.
+
+    Used when a worker claims a task that doesn't match its capability
+    (e.g., freecad-worker claiming a render-only task).
+    """
+    tm = _tm(request)
+    task = await tm.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task["status"] != TaskStatus.running.value:
+        raise HTTPException(status_code=400, detail=f"Task is not running (status: {task['status']})")
+
+    await tm.db.update_task_status(task_id, TaskStatus.queued)
+
+    # Re-publish to queue so other workers can claim it
+    intent = task.get("intent_json")
+    if intent:
+        q = getattr(request.app.state, "queue", None)
+        if q:
+            await q.publish(task_id, intent)
+
+    logger.info("Task %s released back to queue", task_id)
+    return {"ok": True, "status": "queued"}
 
 
 @router.get("/tasks/{task_id}/result", response_model=dict)

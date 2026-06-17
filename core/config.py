@@ -84,6 +84,11 @@ class Settings:
     jwt_secret: str = os.getenv("JWT_SECRET", "dev-jwt-secret-change-in-production")
     jwt_expiry_hours: int = int(os.getenv("JWT_EXPIRY_HOURS", "72"))
 
+    # FreeCAD Worker
+    freecad_enabled: bool = os.getenv("FREECAD_ENABLED", "false").lower() in ("1", "true", "yes")
+    freecad_template_dir: str = os.getenv("FREECAD_TEMPLATE_DIR", str(_ROOT / "freecad_templates"))
+    freecad_generate_timeout: int = int(os.getenv("FREECAD_GENERATE_TIMEOUT", "300"))
+
     @property
     def database_url(self) -> str:
         """Database URL — PostgreSQL in production, SQLite for dev."""

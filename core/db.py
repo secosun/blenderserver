@@ -498,15 +498,25 @@ class AsyncDatabase:
         )
         return await self.get_task(task_id)
 
-    async def claim_next_task(self) -> dict | None:
+    async def claim_next_task(self, worker_type: str | None = None) -> dict | None:
         from sqlalchemy import text
         now = _now()
         async with self._engine.connect() as conn:
+            # Worker type routing: filter by intent content
+            type_filter = ""
+            params: dict[str, Any] = {"status": TaskStatus.queued.value}
+            if worker_type == "freecad":
+                type_filter = " AND intent_json LIKE :tpl"
+                params["tpl"] = '%"template_id"%'
+            elif worker_type == "blender":
+                type_filter = " AND (intent_json IS NULL OR intent_json NOT LIKE :tpl)"
+                params["tpl"] = '%"template_id"%'
+
             # PostgreSQL: use FOR UPDATE SKIP LOCKED; SQLite: simple UPDATE
             if self._is_sqlite:
                 row = (await conn.execute(
-                    text("SELECT id FROM tasks WHERE status = :status ORDER BY created_at ASC LIMIT 1"),
-                    {"status": TaskStatus.queued.value},
+                    text(f"SELECT id FROM tasks WHERE status = :status{type_filter} ORDER BY created_at ASC LIMIT 1"),
+                    params,
                 )).mappings().first()
                 if row is None:
                     return None
@@ -521,9 +531,9 @@ class AsyncDatabase:
                     return None
             else:
                 row = (await conn.execute(
-                    text("""SELECT id FROM tasks WHERE status = :status
+                    text(f"""SELECT id FROM tasks WHERE status = :status{type_filter}
                             ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED"""),
-                    {"status": TaskStatus.queued.value},
+                    params,
                 )).mappings().first()
                 if row is None:
                     return None

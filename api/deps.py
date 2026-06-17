@@ -69,3 +69,13 @@ def _hash_api_key(key: str, prefix: str) -> tuple[str, str]:
     salt = prefix.encode("utf-8")
     hashed = hashlib.pbkdf2_hmac("sha256", key.encode("utf-8"), salt, 100_000)
     return prefix, hashed.hex()
+
+
+async def require_admin(
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """Dependency: require the current user to have admin role."""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="管理权限 required")
+    return current_user
