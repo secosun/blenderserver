@@ -17,9 +17,9 @@ logger = logging.getLogger("blenderserver.billing")
 
 DEFAULT_PLANS = [
     {
-        "name": "免费版",
+        "name": "免费体验",
         "slug": "free",
-        "description": "免费体验，每月 10 次渲染",
+        "description": "免费试用，了解出图质量",
         "price_monthly_cents": 0,
         "price_yearly_cents": 0,
         "features": {
@@ -30,46 +30,32 @@ DEFAULT_PLANS = [
         "stripe_monthly_price_id": None, "stripe_yearly_price_id": None,
     },
     {
-        "name": "专业版",
+        "name": "基础套餐",
+        "slug": "starter",
+        "description": "每月 200 张渲染，适合小型门窗厂",
+        "price_monthly_cents": 500000,
+        "price_yearly_cents": 5000000,
+        "features": {
+            "concurrency": 3, "max_resolution": 4096,
+            "max_samples": 512, "max_tasks_per_month": 200,
+        },
+        "is_public": True, "sort_order": 1,
+        "stripe_monthly_price_id": "dev_price_starter_monthly",
+        "stripe_yearly_price_id": "dev_price_starter_yearly",
+    },
+    {
+        "name": "专业套餐",
         "slug": "pro",
-        "description": "每月 500 张渲染，适合中小型门窗厂",
-        "price_monthly_cents": 98000,
-        "price_yearly_cents": 980000,
+        "description": "每月 500 张渲染，适合中型门窗厂",
+        "price_monthly_cents": 980000,
+        "price_yearly_cents": 9800000,
         "features": {
             "concurrency": 5, "max_resolution": 8192,
             "max_samples": 1024, "max_tasks_per_month": 500,
         },
-        "is_public": True, "sort_order": 1,
+        "is_public": True, "sort_order": 2,
         "stripe_monthly_price_id": "dev_price_pro_monthly",
         "stripe_yearly_price_id": "dev_price_pro_yearly",
-    },
-    {
-        "name": "企业版",
-        "slug": "enterprise",
-        "description": "无限渲染，专属材质库，技术支持",
-        "price_monthly_cents": 298000,
-        "price_yearly_cents": 2980000,
-        "features": {
-            "concurrency": 20, "max_resolution": 16384,
-            "max_samples": 10000, "max_tasks_per_month": -1,
-        },
-        "is_public": True, "sort_order": 2,
-        "stripe_monthly_price_id": "dev_price_enterprise_monthly",
-        "stripe_yearly_price_id": "dev_price_enterprise_yearly",
-    },
-    {
-        "name": "按需计费",
-        "slug": "payg",
-        "description": "适合偶尔使用，每月 ¥99 含 100 张",
-        "price_monthly_cents": 9900,
-        "price_yearly_cents": 0,
-        "features": {
-            "concurrency": 2, "max_resolution": 4096,
-            "max_samples": 512, "max_tasks_per_month": 100,
-        },
-        "is_public": True, "sort_order": 3,
-        "stripe_monthly_price_id": "dev_price_payg_monthly",
-        "stripe_yearly_price_id": None,
     },
 ]
 
