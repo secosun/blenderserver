@@ -283,3 +283,71 @@ async def admin_status(
             pass
 
     return status_data
+
+
+@router.get("/stats")
+async def admin_stats(
+    request: Request,
+    _admin: Annotated[dict, Depends(_require_admin)],
+):
+    """Usage statistics for admin dashboard."""
+    from sqlalchemy import text
+    from datetime import datetime, timezone, timedelta
+
+    db = request.app.state.task_manager.db
+
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m")
+
+    # Tasks completed this month
+    monthly_tasks = 0
+    try:
+        row = await db._fetchone(
+            text("SELECT COUNT(*) as cnt FROM tasks WHERE status = 'completed' AND created_at LIKE :prefix"),
+            {"prefix": f"{today}%"},
+        )
+        monthly_tasks = row["cnt"] if row else 0
+    except Exception:
+        pass
+
+    # Total users
+    total_users = 0
+    try:
+        row = await db._fetchone(text("SELECT COUNT(*) as cnt FROM users"))
+        total_users = row["cnt"] if row else 0
+    except Exception:
+        pass
+
+    # Active subscriptions (non-free)
+    paid_subs = 0
+    try:
+        row = await db._fetchone(
+            text("SELECT COUNT(*) as cnt FROM subscriptions s JOIN subscription_plans p ON s.plan_id = p.id WHERE s.status = 'active' AND p.price_monthly_cents > 0"),
+        )
+        paid_subs = row["cnt"] if row else 0
+    except Exception:
+        pass
+
+    # Tasks per day (last 30 days)
+    daily_tasks = []
+    try:
+        for i in range(30, -1, -1):
+            day = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+            row = await db._fetchone(
+                text("SELECT COUNT(*) as cnt FROM tasks WHERE status = 'completed' AND created_at LIKE :prefix"),
+                {"prefix": f"{day}%"},
+            )
+            daily_tasks.append({"date": day, "count": row["cnt"] if row else 0})
+    except Exception:
+        pass
+
+    # Revenue estimate
+    estimated_revenue = paid_subs * 199  # rough estimate based on avg plan price
+
+    return {
+        "total_users": total_users,
+        "monthly_tasks": monthly_tasks,
+        "paid_subscriptions": paid_subs,
+        "estimated_monthly_revenue": estimated_revenue,
+        "daily_tasks": daily_tasks,
+    }

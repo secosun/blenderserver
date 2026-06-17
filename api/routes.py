@@ -121,6 +121,69 @@ async def create_task(
     return task
 
 
+@router.post("/tasks/batch")
+async def create_batch_tasks(
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)] = None,
+):
+    """Create and dispatch multiple tasks from a JSON array.
+
+    Request body::
+
+        {
+            "tasks": [
+                {"template_id": "...", "template_params": {...}, "scene_id": "...", "name": "..."},
+                ...
+            ]
+        }
+
+    Returns list of created task IDs.
+    """
+    import json
+    body = await request.json()
+    tasks_data = body.get("tasks", [])
+    if not tasks_data or len(tasks_data) > 100:
+        raise HTTPException(status_code=400, detail="Batch size must be 1-100")
+
+    tm = _tm(request)
+    created = []
+    for item in tasks_data:
+        # Validate required fields
+        template_id = item.get("template_id") or ""
+        if not template_id:
+            raise HTTPException(status_code=400, detail="Each task must have template_id")
+
+        intent = {
+            "template_id": template_id,
+            "template_params": item.get("template_params", {}),
+            "scene_id": item.get("scene_id", ""),
+            "camera_styles": item.get("camera_styles", item.get("scene_id") or ""),
+            "output_format": item.get("output_format", "png"),
+            "product_category": None,
+        }
+        task = await tm.db.create_task(
+            id=str(uuid.uuid4()),
+            user_id=current_user["id"],
+            model_id=template_id,
+            prompt=item.get("prompt", ""),
+            scene_id=item.get("scene_id"),
+            scene_name=item.get("scene_name"),
+            storage_path="",
+            name=item.get("name") or f"Batch {template_id[:8]}",
+        )
+        await tm.db.update_task_status(task["id"], TaskStatus.queued, intent_json=intent)
+
+        # Dispatch — publish to queue
+        q = getattr(request.app.state, "queue", None)
+        if q:
+            await q.publish(task["id"], intent)
+
+        created.append(task["id"])
+
+    logger.info("Batch created %d tasks by user %s", len(created), current_user["id"])
+    return {"ok": True, "count": len(created), "task_ids": created}
+
+
 @router.get("/tasks", response_model=TaskListResponse)
 async def list_tasks(
     request: Request,
