@@ -191,6 +191,75 @@ async def get_audit_log(
     return {"logs": logs}
 
 
+@router.post("/subscription/set")
+async def admin_set_subscription(
+    request: Request,
+    body: dict,
+    _admin: Annotated[dict, Depends(_require_admin)],
+):
+    """Manually set a user's subscription plan (admin only).
+
+    Use for: manual upgrades after offline payment, customer support.
+    Request body: {"user_id": "...", "plan_slug": "pro|starter|free|payg", "interval": "monthly|yearly"}
+    """
+    from sqlalchemy import text
+    from datetime import datetime, timezone, timedelta
+    import uuid
+
+    db = request.app.state.task_manager.db
+    user_id = body.get("user_id", "")
+    plan_slug = body.get("plan_slug", "")
+    interval = body.get("interval", "monthly")
+
+    if not user_id or not plan_slug:
+        raise HTTPException(status_code=400, detail="user_id and plan_slug required")
+
+    # Find plan
+    plans = await db.list_plans(public_only=False)
+    plan = next((p for p in plans if p["slug"] == plan_slug), None)
+    if not plan:
+        raise HTTPException(status_code=404, detail=f"Plan '{plan_slug}' not found")
+
+    # Find org for user
+    org = await db.get_organization_by_user(user_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="User has no organization")
+
+    now = datetime.now(timezone.utc)
+    sub = await db._fetchone(
+        text("SELECT * FROM subscriptions WHERE organization_id = :oid"),
+        {"oid": org["id"]},
+    )
+
+    if sub:
+        await db._execute(
+            text("""UPDATE subscriptions SET plan_id = :pid, status = 'active',
+                    billing_interval = :interval, current_period_start = :cps,
+                    current_period_end = :cpe, cancel_at_period_end = false,
+                    updated_at = :now WHERE id = :sid"""),
+            {"pid": plan["id"], "interval": interval,
+             "cps": now.isoformat(),
+             "cpe": (now + timedelta(days=30)).isoformat(),
+             "now": now.isoformat(), "sid": sub["id"]},
+        )
+    else:
+        sub_id = str(uuid.uuid4())
+        await db._execute(
+            text("""INSERT INTO subscriptions (id, organization_id, plan_id, status,
+                    billing_interval, current_period_start, current_period_end, created_at, updated_at)
+                    VALUES (:id, :oid, :pid, 'active', :interval, :cps, :cpe, :now, :now)"""),
+            {"id": sub_id, "oid": org["id"], "pid": plan["id"], "interval": interval,
+             "cps": now.isoformat(), "cpe": (now + timedelta(days=30)).isoformat(),
+             "now": now.isoformat()},
+        )
+
+    from core.quota_sync import sync_quotas_for_org
+    await sync_quotas_for_org(db, org["id"])
+
+    logger.info("Admin set subscription: user=%s plan=%s", user_id, plan_slug)
+    return {"ok": True, "plan": plan_slug, "user_id": user_id}
+
+
 # ── Dead letter management ──────────────────────────────────────────
 
 
