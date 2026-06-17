@@ -197,6 +197,7 @@ from api.assets import router as assets_router
 from api.scenes_manage import router as scenes_manage_router
 from api.freecad_templates import router as freecad_templates_router
 from api.finishes import router as finishes_router
+from api.tickets import router as tickets_router
 from worker.callback import router as worker_router
 
 app.include_router(auth_router, prefix="/api")
@@ -211,6 +212,7 @@ app.include_router(assets_router, prefix="/api")
 app.include_router(scenes_manage_router, prefix="/api")
 app.include_router(freecad_templates_router, prefix="/api")
 app.include_router(finishes_router, prefix="/api")
+app.include_router(tickets_router, prefix="/api")
 app.include_router(worker_router, prefix="/api")
 
 # Metrics endpoint (no prefix, at root)
