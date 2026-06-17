@@ -89,6 +89,9 @@ class Settings:
     freecad_template_dir: str = os.getenv("FREECAD_TEMPLATE_DIR", str(_ROOT / "freecad_templates"))
     freecad_generate_timeout: int = int(os.getenv("FREECAD_GENERATE_TIMEOUT", "300"))
 
+    # Material finishes (filesystem path to finish JSON files)
+    finishes_dir: str = os.getenv("FINISHES_DIR", "/blender_mcp_presets/finishes")
+
     @property
     def database_url(self) -> str:
         """Database URL — PostgreSQL in production, SQLite for dev."""
