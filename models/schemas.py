@@ -259,6 +259,7 @@ class CheckoutSessionRequest(BaseModel):
     price_id: str
     success_url: str = ""
     cancel_url: str = ""
+    payment_method: str = "stripe"  # stripe | alipay | wechat
 
 
 class CheckoutSessionResponse(BaseModel):

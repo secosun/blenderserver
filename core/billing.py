@@ -117,14 +117,14 @@ async def create_stripe_customer(email: str, name: str = "") -> str:
 async def create_checkout_session(
     price_id: str, customer_id: str, org_id: str,
     success_url: str = "", cancel_url: str = "",
+    payment_method: str = "stripe",
 ) -> str:
     """Create a Stripe Checkout Session (or simulated in dev mode)."""
     if _is_dev_mode():
-        logger.info("Dev mode: simulated checkout for price=%s customer=%s", price_id, customer_id)
+        logger.info("Dev mode: simulated checkout for price=%s customer=%s method=%s", price_id, customer_id, payment_method)
         base = settings.cors_origins[0] if settings.cors_origins and settings.cors_origins[0] != "*" else "http://localhost:5173"
-        # Simulate immediate completion by returning a redirect that auto-completes
         token = uuid.uuid4().hex[:12]
-        return f"{base}/api/billing/dev-checkout-complete?session_id=dev_{token}&org_id={org_id}"
+        return f"{base}/api/billing/dev-checkout-complete?session_id=dev_{token}&org_id={org_id}&method={payment_method}"
     import stripe
     stripe.api_key = settings.stripe_secret_key
     base_url = settings.cors_origins[0] if settings.cors_origins and settings.cors_origins[0] != "*" else "http://localhost:5173"

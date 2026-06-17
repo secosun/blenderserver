@@ -270,6 +270,7 @@ async def create_checkout(
         org_id=org["id"],
         success_url=body.success_url,
         cancel_url=body.cancel_url,
+        payment_method=body.payment_method,
     )
     return CheckoutSessionResponse(url=url)
 
