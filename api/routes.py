@@ -175,6 +175,15 @@ async def dispatch_task(
         if running >= max_conc:
             raise HTTPException(status_code=429, detail=f"Concurrency limit reached ({running}/{max_conc})")
 
+        # Monthly task limit
+        monthly = await tm.db.count_tasks_this_month(current_user["id"])
+        max_tasks = user.get("quota_max_tasks_per_month", -1)
+        if max_tasks > 0 and monthly >= max_tasks:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Monthly task limit reached ({monthly}/{max_tasks}). Upgrade your plan.",
+            )
+
     # Check worker pool capacity
     await tm.db.cleanup_stale_workers()
     registered = await tm.db.count_workers_by_status()

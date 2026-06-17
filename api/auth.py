@@ -54,12 +54,10 @@ async def register(body: UserCreate, request: Request):
     from core.billing import create_stripe_customer
     from core.quota_sync import sync_quotas_for_user
 
-    stripe_customer_id = ""
-    if settings.stripe_enabled:
-        stripe_customer_id = await create_stripe_customer(
-            email=body.email,
-            name=body.display_name or body.email,
-        )
+    stripe_customer_id = await create_stripe_customer(
+        email=body.email,
+        name=body.display_name or body.email,
+    )
 
     org = await db.create_organization(
         name=f"{body.display_name or body.email} 的组织",

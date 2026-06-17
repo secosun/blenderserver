@@ -291,6 +291,9 @@ class AsyncDatabase:
                 ("eta_seconds", "INTEGER"),
                 ("name", "VARCHAR(200)"),
             ],
+            "users": [
+                ("quota_max_tasks_per_month", "INTEGER NOT NULL DEFAULT -1"),
+            ],
         }
 
         for table, columns in migrations.items():
@@ -560,6 +563,17 @@ class AsyncDatabase:
         row = await self._fetchone(
             text("SELECT COUNT(*) as cnt FROM tasks WHERE user_id = :uid AND status = :status"),
             {"uid": user_id, "status": status},
+        )
+        return row["cnt"] if row else 0
+
+    async def count_tasks_this_month(self, user_id: str) -> int:
+        from sqlalchemy import text
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        prefix = now.strftime("%Y-%m")
+        row = await self._fetchone(
+            text("SELECT COUNT(*) as cnt FROM tasks WHERE user_id = :uid AND created_at LIKE :prefix AND status = 'completed'"),
+            {"uid": user_id, "prefix": f"{prefix}%"},
         )
         return row["cnt"] if row else 0
 

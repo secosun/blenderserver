@@ -6,6 +6,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import text
 
 from api.deps import get_current_user
 from core.billing import create_checkout_session, create_portal_session
@@ -241,9 +242,6 @@ async def create_checkout(
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
     """Create a Stripe Checkout Session for upgrading/downgrading."""
-    if not settings.stripe_enabled:
-        raise HTTPException(status_code=501, detail="Stripe not configured")
-
     db = _db(request)
     org = await db.get_organization_by_user(current_user["id"])
     if not org:
@@ -251,7 +249,20 @@ async def create_checkout(
 
     customer_id = org.get("stripe_customer_id") or ""
     if not customer_id:
-        raise HTTPException(status_code=400, detail="No Stripe customer ID. Contact support.")
+        if not settings.stripe_enabled:
+            # Dev mode: create a fake customer
+            from core.billing import create_stripe_customer
+            customer_id = await create_stripe_customer(
+                current_user.get("email", ""),
+                current_user.get("display_name", ""),
+            )
+            if customer_id:
+                await db._execute(
+                    text("UPDATE organizations SET stripe_customer_id = :cid WHERE id = :oid"),
+                    {"cid": customer_id, "oid": org["id"]},
+                )
+        if not customer_id:
+            raise HTTPException(status_code=400, detail="No Stripe customer ID. Contact support.")
 
     url = await create_checkout_session(
         price_id=body.price_id,
@@ -321,6 +332,69 @@ async def reactivate_subscription(
 
     await db.update_subscription(sub["id"], cancel_at_period_end=False)
     return {"ok": True, "message": "Subscription reactivated"}
+
+
+@router.get("/dev-checkout-complete")
+async def dev_checkout_complete(
+    request: Request,
+    session_id: str = "",
+    org_id: str = "",
+):
+    """Dev mode: simulate Stripe webhook after checkout."""
+    if settings.stripe_enabled:
+        raise HTTPException(status_code=400, detail="Only available in dev mode")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Missing org_id")
+
+    db = _db(request)
+    # Find the selected plan from the session_id (dev_price_{slug}_monthly/yearly)
+    import re
+    m = re.search(r"dev_price_(\w+)_(monthly|yearly)", session_id or "")
+    plan_slug = m.group(1) if m else "free"
+    interval = m.group(2) if m else "monthly"
+
+    plans = await db.list_plans(public_only=False)
+    plan = next((p for p in plans if p["slug"] == plan_slug), None)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    # Create or update subscription
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    sub = await db._fetchone(
+        text("SELECT * FROM subscriptions WHERE organization_id = :oid"),
+        {"oid": org_id},
+    )
+    if sub:
+        await db._execute(
+            text("""UPDATE subscriptions SET plan_id = :pid, status = 'active',
+                    billing_interval = :interval, current_period_start = :cps,
+                    current_period_end = :cpe, cancel_at_period_end = false,
+                    updated_at = :now WHERE id = :sid"""),
+            {"pid": plan["id"], "interval": interval,
+             "cps": now.isoformat(),
+             "cpe": (now + timedelta(days=30)).isoformat(),
+             "now": now.isoformat(), "sid": sub["id"]},
+        )
+    else:
+        import uuid
+        sub_id = str(uuid.uuid4())
+        await db._execute(
+            text("""INSERT INTO subscriptions (id, organization_id, plan_id, status,
+                    billing_interval, current_period_start, current_period_end, created_at, updated_at)
+                    VALUES (:id, :oid, :pid, 'active', :interval, :cps, :cpe, :now, :now)"""),
+            {"id": sub_id, "oid": org_id, "pid": plan["id"], "interval": interval,
+             "cps": now.isoformat(), "cpe": (now + timedelta(days=30)).isoformat(),
+             "now": now.isoformat()},
+        )
+
+    # Sync quotas
+    from core.quota_sync import sync_quotas_for_org
+    await sync_quotas_for_org(db, org_id)
+    logger.info("Dev checkout complete: org=%s plan=%s", org_id, plan_slug)
+    from fastapi.responses import RedirectResponse
+    base = settings.cors_origins[0] if settings.cors_origins and settings.cors_origins[0] != "*" else "http://localhost:5173"
+    return RedirectResponse(url=f"{base}/subscription?success=true")
 
 
 # ---------------------------------------------------------------------------

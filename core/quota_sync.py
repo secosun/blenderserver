@@ -33,6 +33,7 @@ async def sync_quotas_for_org(db: AsyncDatabase, org_id: str):
     concurrency = features.get("concurrency", 2)
     max_res = features.get("max_resolution", 4096)
     max_samp = features.get("max_samples", 512)
+    max_tasks = features.get("max_tasks_per_month", -1)
 
     members = await db.get_org_members(org_id)
     for member in members:
@@ -41,11 +42,12 @@ async def sync_quotas_for_org(db: AsyncDatabase, org_id: str):
             quota_concurrency=concurrency,
             quota_max_resolution=max_res,
             quota_max_samples=max_samp,
+            quota_max_tasks_per_month=max_tasks,
         )
 
     logger.info(
-        "Synced quotas for org %s (plan=%s): concurrency=%d, max_res=%d, max_samp=%d",
-        org_id, plan.get("slug", "?"), concurrency, max_res, max_samp,
+        "Synced quotas for org %s (plan=%s): concurrency=%d, max_res=%d, max_samp=%d, max_tasks=%d",
+        org_id, plan.get("slug", "?"), concurrency, max_res, max_samp, max_tasks,
     )
 
 

@@ -1,8 +1,14 @@
-"""Billing helpers — plan seeding, Stripe customer/checkout helpers."""
+"""Billing helpers — plan seeding, Stripe customer/checkout helpers.
+
+Dev mode: when ``STRIPE_SECRET_KEY`` is not set, all Stripe operations
+are simulated (fake customer IDs, fake checkout sessions that auto-complete).
+This lets the full billing flow work in development without a Stripe account.
+"""
 
 from __future__ import annotations
 
 import logging
+import uuid
 
 from core.config import settings
 from core.db import AsyncDatabase
@@ -17,32 +23,25 @@ DEFAULT_PLANS = [
         "price_monthly_cents": 0,
         "price_yearly_cents": 0,
         "features": {
-            "concurrency": 1,
-            "max_resolution": 2048,
-            "max_samples": 256,
-            "max_tasks_per_month": 10,
+            "concurrency": 1, "max_resolution": 2048,
+            "max_samples": 256, "max_tasks_per_month": 10,
         },
-        "is_public": True,
-        "sort_order": 0,
-        "stripe_monthly_price_id": None,
-        "stripe_yearly_price_id": None,
+        "is_public": True, "sort_order": 0,
+        "stripe_monthly_price_id": None, "stripe_yearly_price_id": None,
     },
     {
         "name": "专业版",
         "slug": "pro",
-        "description": "专业渲染，更高并发和分辨率",
+        "description": "专业渲染，更高并发和分辨率，每月 500 次渲染",
         "price_monthly_cents": 2999,
         "price_yearly_cents": 29900,
         "features": {
-            "concurrency": 5,
-            "max_resolution": 8192,
-            "max_samples": 1024,
-            "max_tasks_per_month": 500,
+            "concurrency": 5, "max_resolution": 8192,
+            "max_samples": 1024, "max_tasks_per_month": 500,
         },
-        "is_public": True,
-        "sort_order": 1,
-        "stripe_monthly_price_id": None,
-        "stripe_yearly_price_id": None,
+        "is_public": True, "sort_order": 1,
+        "stripe_monthly_price_id": "dev_price_pro_monthly",
+        "stripe_yearly_price_id": "dev_price_pro_yearly",
     },
     {
         "name": "企业版",
@@ -51,15 +50,12 @@ DEFAULT_PLANS = [
         "price_monthly_cents": 9999,
         "price_yearly_cents": 99900,
         "features": {
-            "concurrency": 20,
-            "max_resolution": 16384,
-            "max_samples": 10000,
-            "max_tasks_per_month": -1,
+            "concurrency": 20, "max_resolution": 16384,
+            "max_samples": 10000, "max_tasks_per_month": -1,
         },
-        "is_public": True,
-        "sort_order": 2,
-        "stripe_monthly_price_id": None,
-        "stripe_yearly_price_id": None,
+        "is_public": True, "sort_order": 2,
+        "stripe_monthly_price_id": "dev_price_enterprise_monthly",
+        "stripe_yearly_price_id": "dev_price_enterprise_yearly",
     },
     {
         "name": "按需付费",
@@ -68,15 +64,11 @@ DEFAULT_PLANS = [
         "price_monthly_cents": 0,
         "price_yearly_cents": 0,
         "features": {
-            "concurrency": 2,
-            "max_resolution": 4096,
-            "max_samples": 512,
-            "max_tasks_per_month": -1,
+            "concurrency": 2, "max_resolution": 4096,
+            "max_samples": 512, "max_tasks_per_month": -1,
         },
-        "is_public": True,
-        "sort_order": 3,
-        "stripe_monthly_price_id": None,
-        "stripe_yearly_price_id": None,
+        "is_public": True, "sort_order": 3,
+        "stripe_monthly_price_id": None, "stripe_yearly_price_id": None,
     },
 ]
 
@@ -92,13 +84,25 @@ async def seed_plans(db: AsyncDatabase):
     logger.info("Seeded %d default plans", len(DEFAULT_PLANS))
 
 
-async def create_stripe_customer(email: str, name: str = "") -> str:
-    """Create a Stripe Customer and return the customer ID.
+# ---------------------------------------------------------------------------
+# Dev mode helpers
+# ---------------------------------------------------------------------------
 
-    Returns empty string if Stripe is not configured.
-    """
+_DEV_CUSTOMER_COUNTER = 0
+
+
+def _is_dev_mode() -> bool:
+    return not settings.stripe_enabled
+
+
+async def create_stripe_customer(email: str, name: str = "") -> str:
+    """Create a Stripe Customer (or simulated in dev mode)."""
+    global _DEV_CUSTOMER_COUNTER
     if not settings.stripe_enabled:
-        return ""
+        _DEV_CUSTOMER_COUNTER += 1
+        cust_id = f"dev_cus_{_DEV_CUSTOMER_COUNTER:06d}"
+        logger.info("Dev mode: created fake Stripe customer %s for %s", cust_id, email)
+        return cust_id
     try:
         import stripe
         stripe.api_key = settings.stripe_secret_key
@@ -111,21 +115,21 @@ async def create_stripe_customer(email: str, name: str = "") -> str:
 
 
 async def create_checkout_session(
-    price_id: str,
-    customer_id: str,
-    org_id: str,
-    success_url: str = "",
-    cancel_url: str = "",
+    price_id: str, customer_id: str, org_id: str,
+    success_url: str = "", cancel_url: str = "",
 ) -> str:
-    """Create a Stripe Checkout Session and return the URL."""
+    """Create a Stripe Checkout Session (or simulated in dev mode)."""
+    if _is_dev_mode():
+        logger.info("Dev mode: simulated checkout for price=%s customer=%s", price_id, customer_id)
+        base = settings.cors_origins[0] if settings.cors_origins and settings.cors_origins[0] != "*" else "http://localhost:5173"
+        # Simulate immediate completion by returning a redirect that auto-completes
+        token = uuid.uuid4().hex[:12]
+        return f"{base}/api/billing/dev-checkout-complete?session_id=dev_{token}&org_id={org_id}"
     import stripe
     stripe.api_key = settings.stripe_secret_key
-
     base_url = settings.cors_origins[0] if settings.cors_origins and settings.cors_origins[0] != "*" else "http://localhost:5173"
-
     session = stripe.checkout.Session.create(
-        customer=customer_id,
-        mode="subscription",
+        customer=customer_id, mode="subscription",
         line_items=[{"price": price_id, "quantity": 1}],
         client_reference_id=org_id,
         success_url=success_url or f"{base_url}/subscription?success=true",
@@ -135,12 +139,12 @@ async def create_checkout_session(
 
 
 async def create_portal_session(customer_id: str, return_url: str = "") -> str:
-    """Create a Stripe Customer Portal session and return the URL."""
+    """Create a Stripe Customer Portal session (or simulated in dev mode)."""
+    if _is_dev_mode():
+        return return_url or "/subscription"
     import stripe
     stripe.api_key = settings.stripe_secret_key
-
     base_url = settings.cors_origins[0] if settings.cors_origins and settings.cors_origins[0] != "*" else "http://localhost:5173"
-
     session = stripe.billing_portal.Session.create(
         customer=customer_id,
         return_url=return_url or f"{base_url}/subscription",
