@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -250,8 +250,8 @@ async def admin_status(
     db = request.app.state.task_manager.db
     q = getattr(request.app.state, "queue", None)
 
-    status_data = {
-        "queue_backend": getattr(q, "__class__", None),
+    status_data: dict[str, Any] = {
+        "queue_backend": q.__class__.__name__ if q else "none",
         "database": "postgresql" if not db._is_sqlite else "sqlite",
     }
 
@@ -285,7 +285,7 @@ async def admin_status(
     return status_data
 
 
-@router.get("/stats")
+@router.get("/stats", response_model=None)
 async def admin_stats(
     request: Request,
     _admin: Annotated[dict, Depends(_require_admin)],
