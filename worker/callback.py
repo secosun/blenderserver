@@ -177,6 +177,26 @@ async def worker_callback(task_id: str, body: WorkerCallback, request: Request):
         eta_seconds=body.eta_seconds,
     )
 
+    # Auto-add completed renders to gallery assets
+    if body.status == TaskStatus.completed and (body.result_url or body.result_urls):
+        try:
+            urls = body.result_urls or [body.result_url]
+            file_url = urls[0] if urls else body.result_url
+            if file_url:
+                org = await tm.db.get_organization_by_user(task.get("user_id", ""))
+                await tm.db.create_asset(
+                    task_id=task_id,
+                    organization_id=org["id"] if org else None,
+                    user_id=task.get("user_id", ""),
+                    title=task.get("name") or f"Render {task_id[:8]}",
+                    file_url=file_url,
+                    file_size=None,
+                    metadata={"camera_styles": body.result_urls} if body.result_urls else None,
+                )
+                logger.info("Gallery asset created for task %s", task_id)
+        except Exception as e:
+            logger.warning("Failed to create gallery asset for task %s: %s", task_id, e)
+
     # Push to WebSocket clients
     ws_payload = {
         "type": "status",

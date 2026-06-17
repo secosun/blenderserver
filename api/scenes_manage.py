@@ -30,11 +30,11 @@ async def list_all_scenes(
     system_scenes = []
     for s in list_scenes():
         system_scenes.append({
-            "id": s.id,
-            "name": s.name,
-            "description": s.description,
-            "category": s.category,
-            "params": dict(s.params),
+            "id": s["id"],
+            "name": s["name"],
+            "description": s["description"],
+            "category": "studio",
+            "params": {},
             "is_system": True,
             "is_public": True,
             "thumbnail_url": None,
@@ -44,7 +44,9 @@ async def list_all_scenes(
 
     # User custom scenes from DB
     db = _db(request)
-    custom = await db.list_custom_scenes(current_user["id"])
+    custom = []
+    if current_user:
+        custom = await db.list_custom_scenes(current_user["id"])
 
     return {"scenes": system_scenes + custom}
 
