@@ -60,8 +60,8 @@ DEFAULT_PLANS = [
     {
         "name": "按次计费",
         "slug": "payg",
-        "description": "按渲染次数付费，用多少付多少",
-        "price_monthly_cents": 9900,
+        "description": "适合灵活使用，¥50/张，100 张起充",
+        "price_monthly_cents": 500000,
         "price_yearly_cents": 0,
         "features": {
             "concurrency": 2, "max_resolution": 4096,
