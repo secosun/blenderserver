@@ -57,6 +57,20 @@ DEFAULT_PLANS = [
         "stripe_monthly_price_id": "dev_price_pro_monthly",
         "stripe_yearly_price_id": "dev_price_pro_yearly",
     },
+    {
+        "name": "按次计费",
+        "slug": "payg",
+        "description": "按渲染次数付费，用多少付多少",
+        "price_monthly_cents": 9900,
+        "price_yearly_cents": 0,
+        "features": {
+            "concurrency": 2, "max_resolution": 4096,
+            "max_samples": 512, "max_tasks_per_month": 100,
+        },
+        "is_public": True, "sort_order": 3,
+        "stripe_monthly_price_id": "dev_price_payg_monthly",
+        "stripe_yearly_price_id": None,
+    },
 ]
 
 
