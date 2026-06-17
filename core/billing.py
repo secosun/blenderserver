@@ -58,9 +58,9 @@ DEFAULT_PLANS = [
         "stripe_yearly_price_id": "dev_price_pro_yearly",
     },
     {
-        "name": "按次计费",
+        "name": "充值包",
         "slug": "payg",
-        "description": "适合灵活使用，¥50/张，100 张起充",
+        "description": "一次性购买 100 张渲染额度，长期有效",
         "price_monthly_cents": 500000,
         "price_yearly_cents": 0,
         "features": {
