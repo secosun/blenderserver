@@ -51,6 +51,41 @@ async def get_image(finish_id: str, filename: str):
     return FileResponse(str(img_path), media_type=media_map.get(ext, "application/octet-stream"))
 
 
+@router.get("/{finish_id}/trials")
+async def list_trials(finish_id: str):
+    """List individual trial images with scores."""
+    mat_dir = _CAL_DIR / f"material_{finish_id}"
+    if not mat_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"No calibration data for '{finish_id}'")
+
+    report_path = mat_dir / "calibration_report.json"
+    scores_map: dict[str, float] = {}
+    if report_path.is_file():
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            if "trial_scores" in report:
+                # Try to recover trial->filename mapping from confirm_stage
+                cs = report.get("confirm_stage") or {}
+                candidates = cs.get("candidates") or []
+                for c in candidates:
+                    trial_idx = int(c.get("source_trial", 0))
+                    scores_map[f"confirm_t{trial_idx:03d}"] = c.get("confirm_score", 0)
+        except Exception:
+            pass
+
+    images: list[dict] = []
+    for f in sorted(mat_dir.glob("trial_*.png")):
+        trial_id = f.stem
+        score = scores_map.get(trial_id.replace("trial_", "confirm_t"))
+        images.append({"filename": f.name, "trial_id": trial_id, "score": score})
+
+    for f in sorted(mat_dir.glob("confirm_t*.png")):
+        if not any(i["filename"] == f.name for i in images):
+            images.append({"filename": f.name, "trial_id": f.stem, "score": None})
+
+    return {"images": images, "total": len(images)}
+
+
 @router.get("/{finish_id}/validation/{filename}")
 async def get_validation_image(finish_id: str, filename: str):
     """Return validation image."""
