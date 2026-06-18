@@ -18,12 +18,26 @@ router = APIRouter(prefix="/calibration-reports", tags=["calibration-reports"])
 _CAL_DIR = Path("/app/calibrate_out")
 
 
+def _material_dir(finish_id: str) -> Path | None:
+    """Resolve material calibration output dir (flat or legacy nested layout)."""
+    flat = _CAL_DIR / f"material_{finish_id}"
+    if flat.is_dir() and (flat / "calibration_report.json").is_file():
+        return flat
+    nested = flat / f"material_{finish_id}"
+    if nested.is_dir() and (nested / "calibration_report.json").is_file():
+        return nested
+    if flat.is_dir():
+        return flat
+    return None
+
+
 @router.get("/{finish_id}")
 async def get_report(finish_id: str):
     """Return calibration_report.json for a finish."""
-    report_path = _CAL_DIR / f"material_{finish_id}" / "calibration_report.json"
-    if not report_path.is_file():
+    mat_dir = _material_dir(finish_id)
+    if mat_dir is None:
         raise HTTPException(status_code=404, detail=f"No calibration report for '{finish_id}'")
+    report_path = mat_dir / "calibration_report.json"
     try:
         data = json.loads(report_path.read_text(encoding="utf-8"))
         return data
@@ -34,7 +48,10 @@ async def get_report(finish_id: str):
 @router.get("/{finish_id}/grid")
 async def get_grid(finish_id: str):
     """Return 00_summary_grid.png for a finish."""
-    grid_path = _CAL_DIR / f"material_{finish_id}" / "00_summary_grid.png"
+    mat_dir = _material_dir(finish_id)
+    if mat_dir is None:
+        raise HTTPException(status_code=404, detail=f"No summary grid for '{finish_id}'")
+    grid_path = mat_dir / "00_summary_grid.png"
     if not grid_path.is_file():
         raise HTTPException(status_code=404, detail=f"No summary grid for '{finish_id}'")
     return FileResponse(str(grid_path), media_type="image/png")
@@ -43,7 +60,10 @@ async def get_grid(finish_id: str):
 @router.get("/{finish_id}/images/{filename}")
 async def get_image(finish_id: str, filename: str):
     """Return any image from the calibration output directory."""
-    img_path = _CAL_DIR / f"material_{finish_id}" / filename
+    mat_dir = _material_dir(finish_id)
+    if mat_dir is None:
+        raise HTTPException(status_code=404, detail=f"No calibration data for '{finish_id}'")
+    img_path = mat_dir / filename
     if not img_path.is_file():
         raise HTTPException(status_code=404, detail=f"Image '{filename}' not found")
     ext = img_path.suffix.lower()
@@ -54,8 +74,8 @@ async def get_image(finish_id: str, filename: str):
 @router.get("/{finish_id}/trials")
 async def list_trials(finish_id: str):
     """List individual trial images with scores."""
-    mat_dir = _CAL_DIR / f"material_{finish_id}"
-    if not mat_dir.is_dir():
+    mat_dir = _material_dir(finish_id)
+    if mat_dir is None:
         raise HTTPException(status_code=404, detail=f"No calibration data for '{finish_id}'")
 
     report_path = mat_dir / "calibration_report.json"
@@ -89,7 +109,10 @@ async def list_trials(finish_id: str):
 @router.get("/{finish_id}/validation/{filename}")
 async def get_validation_image(finish_id: str, filename: str):
     """Return validation image."""
-    img_path = _CAL_DIR / f"material_{finish_id}" / "validation" / filename
+    mat_dir = _material_dir(finish_id)
+    if mat_dir is None:
+        raise HTTPException(status_code=404)
+    img_path = mat_dir / "validation" / filename
     if not img_path.is_file():
         raise HTTPException(status_code=404)
     return FileResponse(str(img_path), media_type="image/png")
@@ -121,7 +144,8 @@ async def select_trial(finish_id: str, body: SelectTrialBody):
     specular = float(m.group(3))
 
     # Read report for coat/bump params (use best values as reference)
-    report_path = _CAL_DIR / f"material_{finish_id}" / "calibration_report.json"
+    mat_dir = _material_dir(finish_id)
+    report_path = (mat_dir / "calibration_report.json") if mat_dir else Path()
     coat_weight = 0.0
     coat_roughness = 0.3
     bump_mult = 1.0

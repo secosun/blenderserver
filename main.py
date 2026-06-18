@@ -199,6 +199,8 @@ from api.freecad_templates import router as freecad_templates_router
 from api.finishes import router as finishes_router
 from api.category_finishes import router as category_finishes_router
 from api.calibration_reports import router as calibration_reports_router
+from api.category_calibration_reports import router as category_calibration_reports_router
+from api.scenes_engine import router as scenes_engine_router
 from api.tickets import router as tickets_router
 from worker.callback import router as worker_router
 
@@ -216,6 +218,8 @@ app.include_router(freecad_templates_router, prefix="/api")
 app.include_router(finishes_router, prefix="/api")
 app.include_router(category_finishes_router, prefix="/api")
 app.include_router(calibration_reports_router, prefix="/api")
+app.include_router(category_calibration_reports_router, prefix="/api")
+app.include_router(scenes_engine_router, prefix="/api")
 app.include_router(tickets_router, prefix="/api")
 app.include_router(worker_router, prefix="/api")
 
