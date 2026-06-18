@@ -30,6 +30,19 @@ _scene("outdoor_overcast", "阴天户外", "均匀漫射光，模拟多云天气
 _scene("outdoor_sunset", "日落暖光", "暖色调侧光，长阴影。模拟傍晚金色阳光。", ["outdoor", "暖色"])
 
 
+def list_scenes_flat() -> list[dict]:
+    """Return plain list (id/name/description) for legacy /api/scenes endpoint."""
+    return [
+        {
+            "id": s["id"],
+            "name": s["name"],
+            "description": s["description"],
+            "params": {},
+        }
+        for s in SCENES.values()
+    ]
+
+
 @router.get("")
 async def list_all_scenes():
     """List all registered visual scenes."""
