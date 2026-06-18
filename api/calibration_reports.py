@@ -93,3 +93,108 @@ async def get_validation_image(finish_id: str, filename: str):
     if not img_path.is_file():
         raise HTTPException(status_code=404)
     return FileResponse(str(img_path), media_type="image/png")
+
+
+import re
+from datetime import datetime, timezone
+from pydantic import BaseModel
+
+
+class SelectTrialBody(BaseModel):
+    filename: str
+
+
+@router.post("/{finish_id}/select-trial")
+async def select_trial(finish_id: str, body: SelectTrialBody):
+    """Let human pick the best trial by eye and save its params to finish JSON.
+
+    Parses roughness/metallic/specular from the trial filename pattern
+    (``trial_NNN_rRRR_mMMM_sSSS.png``), reads coat/bump from the
+    calibration report, and writes all params to the finish JSON file.
+    """
+    # Parse params from filename
+    m = re.search(r"_r([\d.]+)_m([\d.]+)_s([\d.]+)", body.filename)
+    if not m:
+        raise HTTPException(status_code=400, detail=f"Cannot parse params from filename: {body.filename}")
+    roughness = float(m.group(1))
+    metallic = float(m.group(2))
+    specular = float(m.group(3))
+
+    # Read report for coat/bump params (use best values as reference)
+    report_path = _CAL_DIR / f"material_{finish_id}" / "calibration_report.json"
+    coat_weight = 0.0
+    coat_roughness = 0.3
+    bump_mult = 1.0
+    if report_path.is_file():
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            best = report.get("best") or {}
+            coat_weight = best.get("coat_weight", 0.0)
+            coat_roughness = best.get("coat_roughness", 0.3)
+            bump_mult = best.get("bump_mult", 1.0)
+        except Exception:
+            pass
+
+    # Read finish JSON and update principled params
+    finish_dir = _get_finish_dir()
+    finish_path = finish_dir / f"{finish_id}.json"
+    if not finish_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Finish file not found: {finish_id}.json")
+
+    try:
+        finish = json.loads(finish_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read finish file: {e}")
+
+    if "principled" not in finish:
+        finish["principled"] = {}
+
+    old = dict(finish["principled"])
+    finish["principled"]["roughness"] = roughness
+    finish["principled"]["metallic"] = metallic
+    finish["principled"]["specular_ior_level"] = specular
+    finish["principled"]["coat_weight"] = coat_weight
+    finish["principled"]["coat_roughness"] = coat_roughness
+
+    if abs(bump_mult - 1.0) > 0.01:
+        bakecoat = finish.setdefault("bakecoat_procedural", {})
+        bump = bakecoat.setdefault("bump", {})
+        base = float(bump.get("strength", 0.02))
+        bump["strength"] = round(base * bump_mult, 5)
+
+    finish["calibration_meta"] = {
+        "last_human_pick": {
+            "filename": body.filename,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "params": finish["principled"],
+        }
+    }
+
+    finish_path.write_text(
+        json.dumps(finish, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    logger.info("Human pick for %s: %s → R=%.2f M=%.2f S=%.2f", finish_id, body.filename, roughness, metallic, specular)
+
+    return {
+        "ok": True,
+        "finish_id": finish_id,
+        "params": {
+            "roughness": roughness,
+            "metallic": metallic,
+            "specular": specular,
+            "coat_weight": coat_weight,
+            "coat_roughness": coat_roughness,
+            "bump_mult": bump_mult,
+        },
+        "changes": {
+            k: {"from": old.get(k), "to": v}
+            for k, v in {"roughness": roughness, "metallic": metallic, "specular_ior_level": specular}.items()
+            if old.get(k) != v
+        },
+    }
+
+
+def _get_finish_dir() -> Path:
+    from core.config import settings
+    return Path(settings.finishes_dir)
