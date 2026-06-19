@@ -46,25 +46,79 @@ async def get_report(finish_id: str):
 
 
 @router.get("/{finish_id}/grid")
-async def get_grid(finish_id: str):
-    """Return 00_summary_grid.png for a finish."""
+async def get_grid(finish_id: str, phase: str = ""):
+    """Return summary grid PNG (``phase``: ``pbr`` | ``texture`` | default all-trials)."""
     mat_dir = _material_dir(finish_id)
     if mat_dir is None:
         raise HTTPException(status_code=404, detail=f"No summary grid for '{finish_id}'")
-    grid_path = mat_dir / "00_summary_grid.png"
+    phase_grids = {
+        "pbr": mat_dir / "pbr" / "00_pbr_grid.png",
+        "texture": mat_dir / "texture" / "00_texture_grid.png",
+    }
+    if phase in phase_grids:
+        grid_path = phase_grids[phase]
+    else:
+        grid_path = mat_dir / "00_summary_grid.png"
     if not grid_path.is_file():
         raise HTTPException(status_code=404, detail=f"No summary grid for '{finish_id}'")
     return FileResponse(str(grid_path), media_type="image/png")
 
 
-@router.get("/{finish_id}/images/{filename}")
+def _safe_image_path(mat_dir: Path, filename: str) -> Path | None:
+    """Resolve image under mat_dir; reject path traversal."""
+    rel = Path(filename)
+    if rel.is_absolute() or ".." in rel.parts:
+        return None
+    candidate = (mat_dir / rel).resolve()
+    try:
+        candidate.relative_to(mat_dir.resolve())
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def _trial_phase(rel_name: str, trial_id: str) -> str:
+    """Classify trial image: pbr | texture | confirm | legacy."""
+    if rel_name.startswith("pbr/") or trial_id.startswith("pbr_"):
+        return "pbr"
+    if rel_name.startswith("texture/") or trial_id.startswith("tex_"):
+        return "texture"
+    if trial_id.startswith("confirm_t") or "confirm_t" in rel_name:
+        return "confirm"
+    return "legacy"
+
+
+def _iter_trial_image_files(mat_dir: Path):
+    """Yield (relative_posix_path, trial_id) for calibration trial PNGs."""
+    layouts = (
+        ("", "trial_*.png"),
+        ("", "confirm_t*.png"),
+        ("pbr", "pbr_*.png"),
+        ("texture", "tex_*.png"),
+    )
+    seen: set[str] = set()
+    for sub, pattern in layouts:
+        root = mat_dir / sub if sub else mat_dir
+        if not root.is_dir():
+            continue
+        for f in sorted(root.glob(pattern)):
+            if f.name.endswith("_review.png") or "_review" in f.stem:
+                continue
+            rel = f.relative_to(mat_dir).as_posix()
+            if rel in seen:
+                continue
+            seen.add(rel)
+            yield rel, f.stem
+
+
+@router.get("/{finish_id}/images/{filename:path}")
 async def get_image(finish_id: str, filename: str):
-    """Return any image from the calibration output directory."""
+    """Return any image from the calibration output directory (supports ``pbr/``, ``texture/``)."""
     mat_dir = _material_dir(finish_id)
     if mat_dir is None:
         raise HTTPException(status_code=404, detail=f"No calibration data for '{finish_id}'")
-    img_path = mat_dir / filename
-    if not img_path.is_file():
+    img_path = _safe_image_path(mat_dir, filename)
+    if img_path is None:
         raise HTTPException(status_code=404, detail=f"Image '{filename}' not found")
     ext = img_path.suffix.lower()
     media_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
@@ -94,14 +148,16 @@ async def list_trials(finish_id: str):
             pass
 
     images: list[dict] = []
-    for f in sorted(mat_dir.glob("trial_*.png")):
-        trial_id = f.stem
+    for rel_name, trial_id in _iter_trial_image_files(mat_dir):
         score = scores_map.get(trial_id.replace("trial_", "confirm_t"))
-        images.append({"filename": f.name, "trial_id": trial_id, "score": score})
-
-    for f in sorted(mat_dir.glob("confirm_t*.png")):
-        if not any(i["filename"] == f.name for i in images):
-            images.append({"filename": f.name, "trial_id": f.stem, "score": None})
+        if score is None and trial_id.startswith("confirm_t"):
+            score = scores_map.get(trial_id)
+        images.append({
+            "filename": rel_name,
+            "trial_id": trial_id,
+            "score": score,
+            "phase": _trial_phase(rel_name, trial_id),
+        })
 
     return {"images": images, "total": len(images)}
 
