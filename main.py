@@ -202,6 +202,7 @@ from api.calibration_reports import router as calibration_reports_router
 from api.category_calibration_reports import router as category_calibration_reports_router
 from api.scenes_engine import router as scenes_engine_router
 from api.tickets import router as tickets_router
+from api.texture_profiles import router as texture_profiles_router
 from worker.callback import router as worker_router
 
 app.include_router(auth_router, prefix="/api")
@@ -221,6 +222,7 @@ app.include_router(calibration_reports_router, prefix="/api")
 app.include_router(category_calibration_reports_router, prefix="/api")
 app.include_router(scenes_engine_router, prefix="/api")
 app.include_router(tickets_router, prefix="/api")
+app.include_router(texture_profiles_router, prefix="/api")
 app.include_router(worker_router, prefix="/api")
 
 # Metrics endpoint (no prefix, at root)
