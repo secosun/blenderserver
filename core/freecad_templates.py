@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS {FREECAD_TEMPLATE_TABLE} (
     category VARCHAR(100) DEFAULT 'generic',
     storage_path VARCHAR(500) NOT NULL,
     params_schema TEXT NOT NULL DEFAULT '{{}}',
+    available_finishes TEXT DEFAULT '[]',
+    available_colors TEXT DEFAULT '[]',
     thumbnail_url VARCHAR(500),
     tags TEXT DEFAULT '[]',
     is_active BOOLEAN DEFAULT true,
@@ -50,11 +52,48 @@ CREATE TABLE IF NOT EXISTS {FREECAD_TEMPLATE_TABLE} (
 
 
 async def ensure_table(db: AsyncDatabase) -> None:
+    """Ensure freecad_templates table exists with all required columns.
+
+    Uses PRAGMA to check table existence (safe against transient DB errors),
+    then ALTER TABLE to add any missing columns (safe migration for existing data).
+    """
     from sqlalchemy import text
+
+    # Step 1: check if table exists at all
     try:
-        await db._fetchone(text(f"SELECT 1 FROM {FREECAD_TEMPLATE_TABLE} LIMIT 1"))
+        rows = await db._fetchall(
+            text(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{FREECAD_TEMPLATE_TABLE}'")
+        )
     except Exception:
+        # Cannot even query sqlite_master — create table as last resort
         await db._execute(text(_DDL))
+        return
+
+    if not rows:
+        # Table does not exist yet — create it
+        await db._execute(text(_DDL))
+        return
+
+    # Step 2: table exists — check for missing columns (migration)
+    try:
+        cols = await db._fetchall(text(f"PRAGMA table_info({FREECAD_TEMPLATE_TABLE})"))
+        existing = {c["name"] for c in cols}
+    except Exception:
+        return  # can't check columns, leave untouched
+
+    required_columns = {
+        "available_finishes": "TEXT DEFAULT '[]'",
+        "available_colors": "TEXT DEFAULT '[]'",
+    }
+    for col_name, col_type in required_columns.items():
+        if col_name not in existing:
+            try:
+                await db._execute(
+                    text(f"ALTER TABLE {FREECAD_TEMPLATE_TABLE} ADD COLUMN {col_name} {col_type}")
+                )
+                print(f"Added missing column {col_name} to {FREECAD_TEMPLATE_TABLE}")
+            except Exception:
+                pass
 
 
 # ======================================================================
@@ -73,6 +112,8 @@ async def create_template(
     tags: list[str] | None,
     created_by: str,
     thumbnail_url: str | None = None,
+    available_finishes: list[str] | None = None,
+    available_colors: list[str] | None = None,
 ) -> dict:
     from sqlalchemy import text
 
@@ -83,9 +124,11 @@ async def create_template(
     await db._execute(
         text(f"""INSERT INTO {FREECAD_TEMPLATE_TABLE}
                 (id, name, slug, description, category, storage_path,
-                 params_schema, tags, created_by, created_at, updated_at)
+                 params_schema, tags, available_finishes, available_colors,
+                 created_by, created_at, updated_at)
                 VALUES (:id, :name, :slug, :desc, :cat, :spath,
-                        :schema, :tags, :cb, :now, :now)"""),
+                        :schema, :tags, :finishes, :colors,
+                        :cb, :now, :now)"""),
         {
             "id": tid,
             "name": name,
@@ -95,6 +138,8 @@ async def create_template(
             "spath": storage_path,
             "schema": json.dumps(params_schema or {}, ensure_ascii=False),
             "tags": json.dumps(tags or [], ensure_ascii=False),
+            "finishes": json.dumps(available_finishes or [], ensure_ascii=False),
+            "colors": json.dumps(available_colors or [], ensure_ascii=False),
             "cb": created_by,
             "now": now,
         },
@@ -169,6 +214,10 @@ async def update_template(
         kwargs["params_schema"] = json.dumps(kwargs["params_schema"], ensure_ascii=False)
     if "tags" in kwargs and isinstance(kwargs["tags"], list):
         kwargs["tags"] = json.dumps(kwargs["tags"], ensure_ascii=False)
+    if "available_finishes" in kwargs and isinstance(kwargs["available_finishes"], list):
+        kwargs["available_finishes"] = json.dumps(kwargs["available_finishes"], ensure_ascii=False)
+    if "available_colors" in kwargs and isinstance(kwargs["available_colors"], list):
+        kwargs["available_colors"] = json.dumps(kwargs["available_colors"], ensure_ascii=False)
 
     set_clause = ", ".join(f"{k} = :{k}" for k in kwargs)
     values = {**kwargs, "id": template_id}
@@ -247,7 +296,7 @@ async def upload_template_thumbnail(
 def _format_template(row: dict) -> dict:
     result = dict(row)
     # Parse JSON fields
-    for field in ("params_schema", "tags"):
+    for field in ("params_schema", "tags", "available_finishes", "available_colors"):
         if isinstance(result.get(field), str):
             try:
                 result[field] = json.loads(result[field])

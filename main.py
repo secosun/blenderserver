@@ -204,6 +204,7 @@ from api.scenes_engine import router as scenes_engine_router
 from api.tickets import router as tickets_router
 from api.texture_profiles import router as texture_profiles_router
 from api.preview import router as preview_router
+from api.colors import router as colors_router
 from worker.callback import router as worker_router
 
 app.include_router(auth_router, prefix="/api")
@@ -225,6 +226,7 @@ app.include_router(scenes_engine_router, prefix="/api")
 app.include_router(tickets_router, prefix="/api")
 app.include_router(texture_profiles_router, prefix="/api")
 app.include_router(preview_router, prefix="/api")
+app.include_router(colors_router, prefix="/api")
 app.include_router(worker_router, prefix="/api")
 
 # Metrics endpoint (no prefix, at root)

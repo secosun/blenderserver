@@ -47,6 +47,8 @@ class TemplateCreate(BaseModel):
         }],
     )
     tags: list[str] = Field(default=[], max_length=10)
+    available_finishes: list[str] | None = Field(default=None, description="List of finish IDs available for this template")
+    available_colors: list[str] | None = Field(default=None, description="List of color keys (e.g. ral_5005) available for this template")
 
 
 class TemplateUpdate(BaseModel):
@@ -56,6 +58,8 @@ class TemplateUpdate(BaseModel):
     params_schema: dict | None = None
     tags: list[str] | None = None
     is_active: bool | None = None
+    available_finishes: list[str] | None = None
+    available_colors: list[str] | None = None
 
 
 class TemplateResponse(BaseModel):
@@ -69,6 +73,8 @@ class TemplateResponse(BaseModel):
     tags: list[str] = []
     is_active: bool
     thumbnail_url: str | None = None
+    available_finishes: list[str] = []
+    available_colors: list[str] = []
     created_by: str
     created_at: str
     updated_at: str
@@ -137,6 +143,8 @@ async def create_template(
         storage_path="",  # Set via upload endpoint
         params_schema=body.params_schema,
         tags=body.tags,
+        available_finishes=body.available_finishes,
+        available_colors=body.available_colors,
         created_by=current_user["id"],
     )
     return template
@@ -241,7 +249,8 @@ async def update_template(
         raise HTTPException(status_code=404, detail="Template not found")
 
     kwargs = {}
-    for field in ("name", "description", "category", "params_schema", "tags", "is_active"):
+    for field in ("name", "description", "category", "params_schema", "tags", "is_active",
+                   "available_finishes", "available_colors"):
         val = getattr(body, field, None)
         if val is not None:
             kwargs[field] = val

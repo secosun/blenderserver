@@ -47,6 +47,10 @@ async def _handoff_freecad_to_blender(
     intent.pop("template_id", None)
     intent.pop("template_params", None)
 
+    # Preserve user-selected catalog_color and surface_finish
+    user_catalog_color = intent.pop("catalog_color", None)
+    user_surface_finish = intent.pop("surface_finish", None)
+
     # Merge scene params into intent so blender-worker has proper render config
     scene_id = intent.get("scene_id") or "studio_champagne"
     scene = get_scene(scene_id)
@@ -61,6 +65,12 @@ async def _handoff_freecad_to_blender(
         intent["camera_styles"] = [camera]
         # Force generic category for demo templates
         intent["product_category"] = "generic"
+
+    # Restore user-selected color/finish (overrides scene defaults)
+    if user_catalog_color:
+        intent["catalog_color"] = user_catalog_color
+    if user_surface_finish:
+        intent["surface_finish"] = user_surface_finish
 
     # Re-queue for the blender stage
     q = getattr(request.app.state, "queue", None)

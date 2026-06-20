@@ -100,6 +100,8 @@ async def create_task(
             "camera_styles": body.camera_styles or [],
             "output_format": body.output_format or "png",
             "product_category": None,  # Will be filled by build_intent
+            "catalog_color": body.catalog_color,
+            "surface_finish": body.surface_finish,
         }
         await tm.db.update_task_status(task["id"], TaskStatus.pending, intent_json=intent)
         task = await tm.get_task(task["id"])

@@ -103,6 +103,8 @@ class TaskCreate(BaseModel):
     prompt: str | None = Field(None, max_length=500, description="Text description of desired rendering (alternative to scene_id)")
     camera_styles: list[str] | None = Field(None, description="Multiple camera angles for batch rendering")
     output_format: str | None = Field(None, description="Output image format: png, jpg, exr, webp")
+    catalog_color: str | None = Field(None, description="Color key from catalog (e.g. ral_5005, powder_black)")
+    surface_finish: str | None = Field(None, description="Finish ID (e.g. powder_matte, anodized_black)")
     user_id: str = Field(default="anonymous")
 
     @property
