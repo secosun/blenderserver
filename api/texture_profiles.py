@@ -12,7 +12,7 @@ logger = logging.getLogger("blenderserver.texture_profiles")
 
 router = APIRouter(prefix="/texture-profiles", tags=["texture-profiles"])
 
-_TEXTURE_DIR = Path("/blender_mcp_presets/texture_profiles")
+_TEXTURE_DIR = Path(__file__).resolve().parent.parent.parent / "blenderworker" / "blender_mcp_presets" / "texture_profiles"
 
 
 def _load_all() -> list[dict]:
