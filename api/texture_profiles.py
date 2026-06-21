@@ -12,7 +12,14 @@ logger = logging.getLogger("blenderserver.texture_profiles")
 
 router = APIRouter(prefix="/texture-profiles", tags=["texture-profiles"])
 
-_TEXTURE_DIR = Path(__file__).resolve().parent.parent.parent / "blenderworker" / "blender_mcp_presets" / "texture_profiles"
+# Try multiple paths: Docker mount, dev host, and fallback
+_REPO = Path(__file__).resolve().parent.parent.parent
+_TEXTURE_CANDIDATES = [
+    Path("/blender_mcp_presets/texture_profiles"),                          # Docker mount
+    _REPO / "blenderworker" / "blender_mcp_presets" / "texture_profiles",   # Host dev (git submodule)
+    _REPO / "blender_mcp_presets" / "texture_profiles",                      # Host dev (alt)
+]
+_TEXTURE_DIR = next((p for p in _TEXTURE_CANDIDATES if p.is_dir()), _TEXTURE_CANDIDATES[0])
 
 
 def _load_all() -> list[dict]:
