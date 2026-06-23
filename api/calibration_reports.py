@@ -5,22 +5,36 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 
 logger = logging.getLogger("blenderserver.calibration_reports")
 
 router = APIRouter(prefix="/calibration-reports", tags=["calibration-reports"])
 
-# Calibrate_out is mounted at /app/calibrate_out in the container
-_CAL_DIR = Path("/app/calibrate_out")
+
+def _cal_dir() -> Path:
+    """Docker mount or host blenderworker/calibrate_out."""
+    repo = Path(__file__).resolve().parents[2]
+    for candidate in (
+        Path("/app/calibrate_out"),
+        repo / "blenderworker" / "calibrate_out",
+        repo / "calibrate_out",
+    ):
+        if candidate.is_dir():
+            return candidate
+    return repo / "blenderworker" / "calibrate_out"
 
 
 def _material_dir(finish_id: str) -> Path | None:
     """Resolve material calibration output dir (flat or legacy nested layout)."""
-    flat = _CAL_DIR / f"material_{finish_id}"
+    cal = _cal_dir()
+    flat = cal / f"material_{finish_id}"
     if flat.is_dir() and (flat / "calibration_report.json").is_file():
         return flat
     nested = flat / f"material_{finish_id}"
@@ -29,6 +43,162 @@ def _material_dir(finish_id: str) -> Path | None:
     if flat.is_dir():
         return flat
     return None
+
+
+def _texture_dir(finish_id: str) -> Path | None:
+    cal = _cal_dir()
+    d = cal / f"texture_{finish_id}"
+    if d.is_dir():
+        return d
+    return None
+
+
+def _safe_image_path(base_dir: Path, filename: str) -> Path | None:
+    """Resolve image under base_dir; reject path traversal."""
+    rel = Path(filename)
+    if rel.is_absolute() or ".." in rel.parts:
+        return None
+    candidate = (base_dir / rel).resolve()
+    try:
+        candidate.relative_to(base_dir.resolve())
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def _media_response(img_path: Path) -> FileResponse:
+    ext = img_path.suffix.lower()
+    media_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+    return FileResponse(str(img_path), media_type=media_map.get(ext, "application/octet-stream"))
+
+
+def _has_material_report(finish_id: str) -> bool:
+    mat_dir = _material_dir(finish_id)
+    if mat_dir is None:
+        return False
+    return (mat_dir / "calibration_report.json").is_file()
+
+
+def _has_texture_report(finish_id: str) -> bool:
+    tex_dir = _texture_dir(finish_id)
+    if tex_dir is None:
+        return False
+    if (tex_dir / "texture_calibration_report.json").is_file():
+        return True
+    if (tex_dir / "compare_beauty_ref.png").is_file():
+        return True
+    return any(tex_dir.glob("trial_*.png"))
+
+
+@router.get("/{finish_id}/availability")
+async def get_finish_availability(finish_id: str):
+    """Which calibration artifacts exist for a finish (material vs texture)."""
+    return {
+        "finish_id": finish_id,
+        "material": _has_material_report(finish_id),
+        "texture": _has_texture_report(finish_id),
+    }
+
+
+@router.get("/texture/index")
+async def list_texture_reports():
+    """Finish IDs with texture calibration output."""
+    cal = _cal_dir()
+    ids: list[str] = []
+    if not cal.is_dir():
+        return {"finish_ids": ids}
+    for p in sorted(cal.glob("texture_*")):
+        if not p.is_dir():
+            continue
+        finish_id = p.name.replace("texture_", "", 1)
+        if (p / "texture_calibration_report.json").is_file() or list(p.glob("trial_*.png")):
+            ids.append(finish_id)
+    return {"finish_ids": ids}
+
+
+@router.get("/texture/{finish_id}")
+async def get_texture_report(finish_id: str):
+    tex_dir = _texture_dir(finish_id)
+    if tex_dir is None:
+        raise HTTPException(status_code=404, detail=f"No texture calibration for '{finish_id}'")
+    report_path = tex_dir / "texture_calibration_report.json"
+    if report_path.is_file():
+        try:
+            return json.loads(report_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to read report: {e}")
+    # Fallback: pipeline report texture section
+    pipeline = _cal_dir() / "calibration_pipeline_report.json"
+    if pipeline.is_file():
+        try:
+            data = json.loads(pipeline.read_text(encoding="utf-8"))
+            tex = data.get("texture")
+            if tex and tex.get("finish_id") == finish_id:
+                return {
+                    "finish_id": finish_id,
+                    "calibration_type": "texture_reference",
+                    "reference_path": tex.get("reference_path"),
+                    "best_score": tex.get("best_score"),
+                    "best_params": tex.get("best_params"),
+                    "n_trials_completed": tex.get("n_trials"),
+                    "review_images": {
+                        "reference": "reference.png",
+                        "beauty_best": "beauty_best.png",
+                        "proxy_best": "proxy_best.png",
+                        "compare_beauty_ref": "compare_beauty_ref.png",
+                        "compare_triple": "compare_triple.png",
+                    },
+                }
+        except Exception:
+            pass
+    raise HTTPException(status_code=404, detail=f"No texture report for '{finish_id}'")
+
+
+@router.get("/texture/{finish_id}/trials")
+async def list_texture_trials(finish_id: str):
+    tex_dir = _texture_dir(finish_id)
+    if tex_dir is None:
+        raise HTTPException(status_code=404, detail=f"No texture calibration for '{finish_id}'")
+
+    scores: list[float] = []
+    report_path = tex_dir / "texture_calibration_report.json"
+    best_trial: int | None = None
+    if report_path.is_file():
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            scores = list(report.get("trial_scores") or [])
+            bt = report.get("best_trial")
+            if bt is not None:
+                best_trial = int(bt)
+        except Exception:
+            pass
+
+    images: list[dict] = []
+    for f in sorted(tex_dir.glob("trial_*.png")):
+        trial_num = None
+        m = re.match(r"trial_(\d+)", f.stem)
+        if m:
+            trial_num = int(m.group(1))
+        score = scores[trial_num] if trial_num is not None and trial_num < len(scores) else None
+        images.append({
+            "filename": f.name,
+            "trial_id": f.stem,
+            "score": score,
+            "phase": "proxy",
+            "is_best": trial_num is not None and trial_num == best_trial,
+        })
+    return {"images": images, "total": len(images)}
+
+
+@router.get("/texture/{finish_id}/images/{filename:path}")
+async def get_texture_image(finish_id: str, filename: str):
+    tex_dir = _texture_dir(finish_id)
+    if tex_dir is None:
+        raise HTTPException(status_code=404, detail=f"No texture data for '{finish_id}'")
+    img_path = _safe_image_path(tex_dir, filename)
+    if img_path is None:
+        raise HTTPException(status_code=404, detail=f"Image '{filename}' not found")
+    return _media_response(img_path)
 
 
 @router.get("/{finish_id}")
@@ -62,19 +232,6 @@ async def get_grid(finish_id: str, phase: str = ""):
     if not grid_path.is_file():
         raise HTTPException(status_code=404, detail=f"No summary grid for '{finish_id}'")
     return FileResponse(str(grid_path), media_type="image/png")
-
-
-def _safe_image_path(mat_dir: Path, filename: str) -> Path | None:
-    """Resolve image under mat_dir; reject path traversal."""
-    rel = Path(filename)
-    if rel.is_absolute() or ".." in rel.parts:
-        return None
-    candidate = (mat_dir / rel).resolve()
-    try:
-        candidate.relative_to(mat_dir.resolve())
-    except ValueError:
-        return None
-    return candidate if candidate.is_file() else None
 
 
 def _trial_phase(rel_name: str, trial_id: str) -> str:
@@ -120,9 +277,7 @@ async def get_image(finish_id: str, filename: str):
     img_path = _safe_image_path(mat_dir, filename)
     if img_path is None:
         raise HTTPException(status_code=404, detail=f"Image '{filename}' not found")
-    ext = img_path.suffix.lower()
-    media_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
-    return FileResponse(str(img_path), media_type=media_map.get(ext, "application/octet-stream"))
+    return _media_response(img_path)
 
 
 @router.get("/{finish_id}/trials")
@@ -138,7 +293,6 @@ async def list_trials(finish_id: str):
         try:
             report = json.loads(report_path.read_text(encoding="utf-8"))
             if "trial_scores" in report:
-                # Try to recover trial->filename mapping from confirm_stage
                 cs = report.get("confirm_stage") or {}
                 candidates = cs.get("candidates") or []
                 for c in candidates:
@@ -174,24 +328,13 @@ async def get_validation_image(finish_id: str, filename: str):
     return FileResponse(str(img_path), media_type="image/png")
 
 
-import re
-from datetime import datetime, timezone
-from pydantic import BaseModel
-
-
 class SelectTrialBody(BaseModel):
     filename: str
 
 
 @router.post("/{finish_id}/select-trial")
 async def select_trial(finish_id: str, body: SelectTrialBody):
-    """Let human pick the best trial by eye and save its params to finish JSON.
-
-    Parses roughness/metallic/specular from the trial filename pattern
-    (``trial_NNN_rRRR_mMMM_sSSS.png``), reads coat/bump from the
-    calibration report, and writes all params to the finish JSON file.
-    """
-    # Parse params from filename
+    """Let human pick the best trial by eye and save its params to finish JSON."""
     m = re.search(r"_r([\d.]+)_m([\d.]+)_s([\d.]+)", body.filename)
     if not m:
         raise HTTPException(status_code=400, detail=f"Cannot parse params from filename: {body.filename}")
@@ -199,7 +342,6 @@ async def select_trial(finish_id: str, body: SelectTrialBody):
     metallic = float(m.group(2))
     specular = float(m.group(3))
 
-    # Read report for coat/bump params (use best values as reference)
     mat_dir = _material_dir(finish_id)
     report_path = (mat_dir / "calibration_report.json") if mat_dir else Path()
     coat_weight = 0.0
@@ -215,7 +357,6 @@ async def select_trial(finish_id: str, body: SelectTrialBody):
         except Exception:
             pass
 
-    # Read finish JSON and update principled params
     finish_dir = _get_finish_dir()
     finish_path = finish_dir / f"{finish_id}.json"
     if not finish_path.is_file():
@@ -254,7 +395,10 @@ async def select_trial(finish_id: str, body: SelectTrialBody):
         json.dumps(finish, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    logger.info("Human pick for %s: %s → R=%.2f M=%.2f S=%.2f", finish_id, body.filename, roughness, metallic, specular)
+    logger.info(
+        "Human pick for %s: %s → R=%.2f M=%.2f S=%.2f",
+        finish_id, body.filename, roughness, metallic, specular,
+    )
 
     return {
         "ok": True,
@@ -269,7 +413,11 @@ async def select_trial(finish_id: str, body: SelectTrialBody):
         },
         "changes": {
             k: {"from": old.get(k), "to": v}
-            for k, v in {"roughness": roughness, "metallic": metallic, "specular_ior_level": specular}.items()
+            for k, v in {
+                "roughness": roughness,
+                "metallic": metallic,
+                "specular_ior_level": specular,
+            }.items()
             if old.get(k) != v
         },
     }
@@ -277,4 +425,5 @@ async def select_trial(finish_id: str, body: SelectTrialBody):
 
 def _get_finish_dir() -> Path:
     from core.config import settings
+
     return Path(settings.finishes_dir)
